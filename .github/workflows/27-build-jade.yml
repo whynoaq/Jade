@@ -1,4 +1,3 @@
-
 name: Build Jade IPA
 
 on:
@@ -23,42 +22,61 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Available Xcode installations:"
-          find /Applications -maxdepth 2 \
-            -path '*/Contents/Developer' -type d -print
+          echo "==> Available Xcode installations:"
+          find /Applications -maxdepth 2 -name 'Xcode*.app' -type d | sort || true
+          echo
+
+          # Collect candidates (order matters — prefer higher versions)
+          candidates=(
+            /Applications/Xcode_27*.app
+            /Applications/Xcode-beta.app
+            /Applications/Xcode_26*.app
+            /Applications/Xcode.app
+          )
 
           XCODE_PATH=""
+          SELECTED_VERSION=""
 
-          for candidate in \
-            /Applications/Xcode_27.0.app \
-            /Applications/Xcode-beta.app \
-            /Applications/Xcode.app
-          do
-            if [ -d "$candidate/Contents/Developer" ]; then
+          for pattern in "${candidates[@]}"; do
+            for candidate in $pattern; do
+              if [ ! -d "$candidate/Contents/Developer" ]; then
+                continue
+              fi
+
               VERSION=$(
                 DEVELOPER_DIR="$candidate/Contents/Developer" \
                 xcodebuild -version 2>/dev/null |
-                awk '/^Xcode / {print $2; exit}'
+                awk '/^Xcode / {print $2; exit}' || true
               )
 
-              echo "$candidate: Xcode ${VERSION:-unknown}"
+              echo "  found: $candidate → Xcode ${VERSION:-unknown}"
 
-              if [[ "${VERSION:-0}" == 27* ]]; then
+              # Prefer any 27.x
+              if [[ "${VERSION:-}" == 27* ]]; then
                 XCODE_PATH="$candidate"
-                break
+                SELECTED_VERSION="$VERSION"
+                break 2
               fi
-            fi
+
+              # Fallback: accept 26.x if nothing better yet
+              if [[ -z "$XCODE_PATH" && "${VERSION:-}" == 26* ]]; then
+                XCODE_PATH="$candidate"
+                SELECTED_VERSION="$VERSION"
+              fi
+            done
           done
 
           if [ -z "$XCODE_PATH" ]; then
-            echo "::error::Xcode 27 is required for project format 110."
+            echo "::error::No suitable Xcode found (need 26+ or 27)."
+            echo "Available versions above. Check the runner image or install Xcode."
             exit 1
           fi
 
-          sudo xcode-select \
-            -s "$XCODE_PATH/Contents/Developer"
-
+          echo
+          echo "==> Selecting: $XCODE_PATH (Xcode $SELECTED_VERSION)"
+          sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
           xcodebuild -version
+          xcodebuild -showsdks | head -20 || true
 
       - name: Validate project
         run: |
