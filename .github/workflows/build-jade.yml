@@ -1,0 +1,40 @@
+
+name: Build Jade IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure Xcode
+        run: |
+          xcode-select -p
+          if [ ! -d /Applications/Xcode.app ]; then
+            XCODE_APP="$(dirname "$(dirname "$(xcode-select -p)")")"
+            sudo ln -s "$XCODE_APP" /Applications/Xcode.app
+          fi
+          xcodebuild -version
+
+      - name: Build Jade
+        run: |
+          chmod +x build_ipa.sh
+          ./build_ipa.sh
+
+      - name: Upload standard Jade IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jade-IPA
+          path: build/Jade.ipa
+          if-no-files-found: error
