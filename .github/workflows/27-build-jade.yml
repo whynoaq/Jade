@@ -1,0 +1,124 @@
+
+name: Build Jade IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Configure Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Available Xcode installations:"
+          find /Applications -maxdepth 2 \
+            -path '*/Contents/Developer' -type d -print
+
+          XCODE_PATH=""
+
+          for candidate in \
+            /Applications/Xcode_27.0.app \
+            /Applications/Xcode-beta.app \
+            /Applications/Xcode.app
+          do
+            if [ -d "$candidate/Contents/Developer" ]; then
+              VERSION=$(
+                DEVELOPER_DIR="$candidate/Contents/Developer" \
+                xcodebuild -version 2>/dev/null |
+                awk '/^Xcode / {print $2; exit}'
+              )
+
+              echo "$candidate: Xcode ${VERSION:-unknown}"
+
+              if [[ "${VERSION:-0}" == 27* ]]; then
+                XCODE_PATH="$candidate"
+                break
+              fi
+            fi
+          done
+
+          if [ -z "$XCODE_PATH" ]; then
+            echo "::error::Xcode 27 is required for project format 110."
+            exit 1
+          fi
+
+          sudo xcode-select \
+            -s "$XCODE_PATH/Contents/Developer"
+
+          xcodebuild -version
+
+      - name: Validate project
+        run: |
+          test -d Jade.xcodeproj
+          xcodebuild -list -project Jade.xcodeproj
+
+      - name: Build Jade
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p build
+
+          xcodebuild build \
+            -project Jade.xcodeproj \
+            -scheme Jade \
+            -configuration Debug \
+            -derivedDataPath build/DerivedData \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package standard Jade IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_PATH="build/DerivedData/Build/Products/Debug-iphoneos/Jade.app"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "::error::Jade.app was not produced."
+            find build/DerivedData/Build/Products \
+              -name '*.app' -print
+            exit 1
+          fi
+
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/Jade.app
+
+          /usr/libexec/PlistBuddy \
+            -c 'Set :CFBundleIdentifier com.jason.Jade' \
+            build/ipa/Payload/Jade.app/Info.plist
+
+          /usr/libexec/PlistBuddy \
+            -c 'Set :CFBundleDisplayName Jade' \
+            build/ipa/Payload/Jade.app/Info.plist
+
+          (
+            cd build/ipa
+            /usr/bin/zip -r -q ../Jade.ipa Payload
+          )
+
+          ls -lh build/Jade.ipa
+
+      - name: Upload Jade IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jade-IPA
+          path: build/Jade.ipa
+          if-no-files-found: error
+          retention-days: 7
